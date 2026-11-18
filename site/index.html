@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fashion-MNIST Leaderboard</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #1f2328;
+      --muted: #656d76;
+      --line: #d0d7de;
+      --row: #f6f8fa;
+      --accent: #0969da;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --text: #e6edf3;
+        --muted: #8d96a0;
+        --line: #30363d;
+        --row: #161b22;
+        --accent: #4493f8;
+      }
+    }
+    body {
+      margin: 0 auto;
+      max-width: 900px;
+      padding: 24px 16px;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.5 system-ui, sans-serif;
+    }
+    h1 { margin: 0 0 4px; font-size: 28px; }
+    p { margin: 0 0 20px; color: var(--muted); }
+    a { color: var(--accent); }
+    .scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+    th { cursor: pointer; user-select: none; font-weight: 600; }
+    th:hover { color: var(--accent); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody tr:nth-child(odd) { background: var(--row); }
+    tr.baseline td { font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Fashion-MNIST Leaderboard</h1>
+  <p>Every scored submission is one row. Accuracy is measured on 10,000 test images the models never trained on.
+     Click a column name to sort.</p>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th class="num">#</th>
+          <th data-key="name">Student</th>
+          <th data-key="accuracy" class="num">Test accuracy</th>
+          <th data-key="parameters" class="num">Model size (parameters)</th>
+          <th data-key="train_seconds" class="num">Training time</th>
+          <th data-key="date">Date</th>
+        </tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="6">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <script>
+    let results = [];
+    let sortKey = "accuracy";
+    let descending = true;
+
+    function cell(text, className = "") {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (className) td.className = className;
+      return td;
+    }
+
+    function render() {
+      const rows = [...results].sort((a, b) => {
+        const order = a[sortKey] < b[sortKey] ? -1 : a[sortKey] > b[sortKey] ? 1 : 0;
+        return descending ? -order : order;
+      });
+      const body = document.getElementById("rows");
+      body.replaceChildren();
+      rows.forEach((r, i) => {
+        const tr = document.createElement("tr");
+        if (r.name === "baseline") tr.className = "baseline";
+        tr.append(cell(i + 1, "num"));
+        const name = cell("");
+        if (r.code_url) {
+          const link = document.createElement("a");
+          link.href = r.code_url;
+          link.textContent = r.name;
+          name.append(link);
+        } else {
+          name.textContent = r.name;
+        }
+        tr.append(
+          name,
+          cell((r.accuracy * 100).toFixed(2) + "%", "num"),
+          cell(r.parameters.toLocaleString("en-US"), "num"),
+          cell(Math.round(r.train_seconds) + " s", "num"),
+          cell(r.date.slice(0, 16).replace("T", " ") + " UTC"),
+        );
+        body.append(tr);
+      });
+      if (rows.length === 0) body.innerHTML = "<tr><td colspan='6'>No scores yet.</td></tr>";
+    }
+
+    document.querySelectorAll("th[data-key]").forEach((th) => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.key;
+        // Clicking the same column again flips the order.
+        descending = key === sortKey ? !descending : key === "accuracy" || key === "date";
+        sortKey = key;
+        render();
+      });
+    });
+
+    fetch("results.json")
+      .then((response) => response.json())
+      .then((data) => { results = data; render(); })
+      .catch(() => {
+        document.getElementById("rows").innerHTML = "<tr><td colspan='6'>Could not load the results.</td></tr>";
+      });
+  </script>
+</body>
+</html>

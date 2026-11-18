@@ -1,0 +1,26 @@
+# Runs on every pull request. A quick check only: style, tests, and that each
+# submission has a train() function. Scoring happens after the teacher merges.
+name: Check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync
+      - name: Check code style
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Run tests
+        run: uv run pytest

@@ -1,0 +1,123 @@
+# Fashion-MNIST class leaderboard
+
+Train a model that looks at a small picture of clothing and says what it is:
+a shirt, a sneaker, a bag, and so on. Then see how you rank against your classmates.
+
+**Leaderboard:** https://dewansa.github.io/undefined-fashion/
+
+Every model is scored on 10,000 test images it has never seen. The leaderboard shows
+three numbers for each submission:
+
+- **Test accuracy:** how many test images the model labels correctly. Higher is better.
+- **Model size:** how many numbers (parameters) the model learned. Smaller is neater.
+- **Training time:** how long your `train()` function ran on GitHub's computer.
+
+## What you need
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs Python and everything else for you.
+- A GitHub account.
+
+## How to submit
+
+1. **Fork** this repo on GitHub, then clone your fork and set it up:
+
+   ```sh
+   git clone https://github.com/<your-github-name>/undefined-fashion
+   cd undefined-fashion
+   uv sync
+   ```
+
+2. **Make your folder** by copying the baseline. Use your GitHub name as the folder name:
+
+   ```sh
+   cp -r submissions/baseline submissions/<your-github-name>
+   ```
+
+3. **Improve the model.** Edit `submissions/<your-github-name>/model.py`. You own the
+   whole training loop: the model, the optimizer, the number of epochs, everything.
+
+4. **Score it on your computer:**
+
+   ```sh
+   uv run score submissions/<your-github-name>
+   ```
+
+   The first run downloads the images (about 30 MB) into `data/`.
+
+5. **Open a pull request** from your fork. A quick check runs on it. Fix anything it
+   complains about. Before you push, you can run the same check yourself:
+
+   ```sh
+   uv run ruff format .
+   uv run ruff check .
+   uv run pytest
+   ```
+
+6. **Wait for the teacher to merge it.** After the merge, GitHub trains your model and adds
+   a row to the leaderboard. This takes a few minutes. Want to try again? Open a new pull
+   request. Every scored submission gets its own row, so your earlier scores stay.
+
+## The rules
+
+Your `model.py` must define this function:
+
+```python
+def train(train_set: Dataset) -> nn.Module:
+    ...
+    return model
+```
+
+- `train_set` holds the 60,000 training images. Each item is `(image, label)`. The image is
+  a `1x28x28` tensor with values from 0 to 1, and the label is a number from 0 to 9.
+- Return your trained model. We test it on images in the same format, on the CPU, and take
+  the class with the highest output as its answer.
+- **Train only on `train_set`.** Do not download or read the test images in any way.
+- **Training must finish in 10 minutes** on GitHub's computer, which has 4 CPU cores and no
+  GPU. The baseline takes about 2 minutes there. Your laptop may be faster or slower.
+- If you change the input (for example, normalize it), do it inside your model, because
+  the test images arrive unchanged.
+- Put all your code in `model.py` and only change files inside your own folder.
+
+## Ideas to try
+
+- Use the `Adam` optimizer instead of `SGD`, or a bigger learning rate.
+- Train for more epochs and watch the valid loss, so you stop before the model overfits.
+- Add more layers, or use a small convolutional network (`nn.Conv2d`).
+- Normalize the input: subtract the mean (0.286) and divide by the standard deviation (0.353).
+- Training is slow mostly because each image is converted one at a time. Load all images
+  into one tensor once at the start, and every epoch gets much faster.
+
+## Project layout
+
+```
+src/fashion/data.py           loads the images
+src/fashion/score.py          trains a submission and measures it (the `score` command)
+submissions/<name>/model.py   one folder per student
+results/                      one small JSON file per scored submission
+site/index.html               the leaderboard page
+tests/                        checks for the scoring code and all submissions
+.github/workflows/check.yml   quick check on every pull request
+.github/workflows/publish.yml scores merged submissions and updates the leaderboard
+```
+
+## For the teacher
+
+**First-time setup:** in the repo's Settings > Pages, set Source to "GitHub Actions".
+
+**Reviewing a pull request:** the "Check" job only confirms the code runs and is tidy.
+Read the student's `model.py` before you merge, because it runs on GitHub with the real
+scoring code. Look for anything that reads the test images (`train=False`), downloads
+files, or changes files outside the student's folder.
+
+**After a merge:** the "Score and publish" workflow trains every submission that changed,
+saves a JSON file per submission in `results/`, and updates the leaderboard. If a
+submission fails, the run shows a red cross and the log says why. The other submissions
+are still published.
+
+**Scoring again:** in the Actions tab, open "Score and publish", click "Run workflow" and
+type a folder name, or `all` to score every submission again.
+
+**Removing a row:** delete its file from `results/` and push. That push updates the website.
+
+**Branch rules:** the workflow pushes new results straight to `main`. If you protect `main`,
+allow GitHub Actions to push to it.

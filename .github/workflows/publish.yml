@@ -1,0 +1,136 @@
+# Runs after the teacher merges a pull request into main.
+# 1. "score" trains every submission that changed and measures it.
+#    It runs student code, so it only gets read access to the repo.
+# 2. "publish" saves the new results to the repo and updates the leaderboard website.
+name: Score and publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      submission:
+        description: "Folder name in submissions/ to score again, or 'all'. Leave empty to only rebuild the website."
+        required: false
+        default: ""
+
+# Run one at a time, so two merges never write results at the same moment.
+concurrency:
+  group: leaderboard
+  cancel-in-progress: false
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync
+
+      # Download the images before any student code runs, and cache them for next time.
+      - id: data-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: data
+          key: fashion-mnist-v1
+      - name: Download Fashion-MNIST
+        run: uv run python -c "from fashion import data; data.train_set(); data.test_set()"
+      - if: steps.data-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: data
+          key: fashion-mnist-v1
+
+      - name: Find submissions to score
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          CHOSEN: ${{ inputs.submission }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$CHOSEN" = "all" ]; then names=$(ls submissions); else names="$CHOSEN"; fi
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            names=$(ls submissions)  # first push: score everything
+          else
+            names=$(git diff --name-only "$BEFORE" HEAD -- submissions/ | cut -d/ -f2 | sort -u)
+          fi
+          for name in $names; do
+            if [ -f "submissions/$name/model.py" ]; then echo "$name" >> to-score.txt; fi
+          done
+          touch to-score.txt
+          echo "Submissions to score:"; cat to-score.txt
+
+      - name: Score submissions
+        run: |
+          failed=0
+          while read -r name; do
+            echo "::group::Scoring $name"
+            if uv run score "submissions/$name" --save new-results; then
+              echo "Scored **$name**" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::Scoring $name failed. Open this step's log to see why."
+              failed=1
+            fi
+            echo "::endgroup::"
+          done < to-score.txt
+          exit $failed
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: new-results
+          path: new-results/
+          if-no-files-found: ignore
+
+  publish:
+    needs: score
+    # Publish the results that worked, even if one submission failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        continue-on-error: true # there is nothing to download when no submission was scored
+        with:
+          name: new-results
+          path: results/
+
+      - name: Save new results to the repo
+        run: |
+          git add results/
+          if git diff --cached --quiet; then
+            echo "No new results."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Add leaderboard results"
+          git pull --rebase
+          git push
+
+      - name: Build the website
+        run: |
+          mkdir -p _site
+          cp site/index.html _site/
+          shopt -s nullglob
+          files=(results/*.json)
+          if [ ${#files[@]} -eq 0 ]; then echo "[]" > _site/results.json; else jq -s . "${files[@]}" > _site/results.json; fi
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v5
