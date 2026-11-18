@@ -1,0 +1,118 @@
+# Runs after every "Check" run on a pull request finishes.
+# It puts the pull request's scores on the leaderboard as "not reviewed", comments
+# the score on the pull request, and removes rows of pull requests that were closed.
+#
+# This workflow can write to the repo, so it NEVER checks out or runs pull request
+# code. It only reads the score files the "Check" run uploaded, and checks them
+# strictly first, because student code could have written anything into them.
+name: PR leaderboard
+
+on:
+  workflow_run:
+    workflows: [Check]
+    types: [completed]
+
+# Run one at a time, together with "Score and publish", so they never clash.
+concurrency:
+  group: leaderboard
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read # to download the uploaded scores
+      contents: write # to save the rows
+      pages: write # to update the website
+      id-token: write
+      pull-requests: write # to comment the score
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7 # main, not the pull request
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Find the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
+            --jq ".[] | \"\(.number) \(.head.sha)\"" > open-prs.txt
+          # Only the newest push of an open pull request counts. Older runs only clean up.
+          number=$(awk -v sha="$HEAD_SHA" '$2 == sha { print $1 }' open-prs.txt | sed -n 1p)
+          names=""
+          if [ -n "$number" ]; then
+            names=$(gh api "repos/$REPO/pulls/$number/files?per_page=100" --paginate \
+              --jq '.[].filename | select(startswith("submissions/")) | split("/")[1]' | sort -u | tr '\n' ' ')
+          fi
+          {
+            echo "number=$number"
+            echo "names=$names"
+            echo "open=$(cut -d' ' -f1 open-prs.txt | tr '\n' ' ')"
+          } >> "$GITHUB_OUTPUT"
+          rm open-prs.txt
+          echo "Pull request: ${number:-none}. Submissions: ${names:-none}"
+
+      - name: Download the scores
+        if: steps.pr.outputs.number != '' && steps.pr.outputs.names != ''
+        continue-on-error: true # there is nothing to download when scoring did not run
+        uses: actions/download-artifact@v8
+        with:
+          name: pr-results
+          path: ${{ runner.temp }}/pr-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Update the rows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.number }}
+          NAMES: ${{ steps.pr.outputs.names }}
+          OPEN: ${{ steps.pr.outputs.open }}
+          UPLOADED: ${{ runner.temp }}/pr-results
+          COMMENT: ${{ runner.temp }}/comment.md
+          LEADERBOARD: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: |
+          leaderboard() { uv run --no-project --python 3.14 python src/fashion/leaderboard.py "$@"; }
+          leaderboard clean --open "$OPEN"
+          if [ -n "$PR" ] && [ -n "$NAMES" ]; then
+            leaderboard add-pr --pr "$PR" --pr-url "https://github.com/$REPO/pull/$PR" \
+              --uploaded "$UPLOADED" --names "$NAMES" \
+              --leaderboard-url "$LEADERBOARD" --comment-file "$COMMENT"
+            gh pr comment "$PR" --repo "$REPO" --body-file "$COMMENT" --edit-last --create-if-none
+          fi
+
+      - name: Save the rows to the repo
+        id: save
+        run: |
+          git add results/
+          if git diff --cached --quiet; then
+            echo "Nothing changed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update pull request rows on the leaderboard"
+          git pull --rebase
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build the website
+        if: steps.save.outputs.changed == 'true'
+        run: |
+          mkdir -p _site
+          cp site/index.html _site/
+          uv run --no-project --python 3.14 python src/fashion/leaderboard.py build --out _site/results.json
+      - if: steps.save.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deploy
+        if: steps.save.outputs.changed == 'true'
+        uses: actions/deploy-pages@v5

@@ -44,8 +44,9 @@ three numbers for each submission:
 
    The first run downloads the images (about 30 MB) into `data/`.
 
-5. **Open a pull request** from your fork. A quick check runs on it. Fix anything it
-   complains about. Before you push, you can run the same check yourself:
+5. **Open a pull request** from your fork. GitHub checks your code, then trains and
+   scores your model. Fix anything the check complains about. Before you push, you can
+   run the same check yourself:
 
    ```sh
    uv run ruff format .
@@ -53,9 +54,14 @@ three numbers for each submission:
    uv run pytest
    ```
 
-6. **Wait for the teacher to merge it.** After the merge, GitHub trains your model and adds
-   a row to the leaderboard. This takes a few minutes. Want to try again? Open a new pull
-   request. Every scored submission gets its own row, so your earlier scores stay.
+6. **See your score.** A few minutes later, a bot comments your score on the pull request,
+   and your row appears on the leaderboard marked *not reviewed*. Each new push to the
+   pull request is scored again and replaces that row. (The first time you open a pull
+   request, the teacher may need to approve the run before it starts.)
+
+7. **Wait for the teacher to merge it.** After the merge, GitHub scores your model once
+   more and your row becomes *reviewed*. Want to try again? Open a new pull request.
+   Every merged submission keeps its own row, so your earlier scores stay.
 
 ## The rules
 
@@ -93,24 +99,34 @@ def train(train_set: Dataset) -> nn.Module:
 src/fashion/data.py           loads the images
 src/fashion/score.py          trains a submission and measures it (the `score` command)
 submissions/<name>/model.py   one folder per student
-results/                      one small JSON file per scored submission
+src/fashion/leaderboard.py    keeps the leaderboard rows and checks pull request scores
+results/                      one small JSON file per merged (reviewed) submission
+results/pending/              one file per open pull request (not reviewed)
 site/index.html               the leaderboard page
 tests/                        checks for the scoring code and all submissions
-.github/workflows/check.yml   quick check on every pull request
-.github/workflows/publish.yml scores merged submissions and updates the leaderboard
+.github/workflows/check.yml          checks and scores every pull request (read-only)
+.github/workflows/pr-leaderboard.yml puts pull request scores on the leaderboard
+.github/workflows/publish.yml        scores merged submissions and updates the leaderboard
 ```
 
 ## For the teacher
 
 **First-time setup:** in the repo's Settings > Pages, set Source to "GitHub Actions".
 
-**Reviewing a pull request:** the "Check" job only confirms the code runs and is tidy.
-Read the student's `model.py` before you merge, because it runs on GitHub with the real
-scoring code. Look for anything that reads the test images (`train=False`), downloads
-files, or changes files outside the student's folder.
+**Pull request scores:** every pull request is checked and scored right away, and its
+score goes on the leaderboard marked *not reviewed*. Nobody has read that code yet, so
+treat those numbers as a preview. The job that runs student code can only read the repo.
+A separate job that never runs student code checks the score file and adds the row.
+Rows of closed pull requests are removed. You can hide unreviewed rows with the checkbox
+on the leaderboard page.
 
-**After a merge:** the "Score and publish" workflow trains every submission that changed,
-saves a JSON file per submission in `results/`, and updates the leaderboard. If a
+**Reviewing a pull request:** read the student's `model.py` before you merge. Look for
+anything that reads the test images (`train=False`), downloads files, or changes files
+outside the student's folder. Merging is what makes a score *reviewed*.
+
+**After a merge:** the "Score and publish" workflow trains every submission that changed
+again, saves a JSON file per submission in `results/`, removes the pull request's
+*not reviewed* row, and updates the leaderboard. If a
 submission fails, the run shows a red cross and the log says why. The other submissions
 are still published.
 
@@ -119,5 +135,8 @@ type a folder name, or `all` to score every submission again.
 
 **Removing a row:** delete its file from `results/` and push. That push updates the website.
 
-**Branch rules:** the workflow pushes new results straight to `main`. If you protect `main`,
+**Branch rules:** the workflows push new results straight to `main`. If you protect `main`,
 allow GitHub Actions to push to it.
+
+**First-time contributors:** GitHub may ask you to approve the first pull request run of a
+new student. You can change this in Settings > Actions > General.

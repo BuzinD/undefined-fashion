@@ -1,15 +1,21 @@
-# Runs on every pull request. A quick check only: style, tests, and that each
-# submission has a train() function. Scoring happens after the teacher merges.
+# Runs on every pull request.
+# 1. "check": code style, tests, and that each submission has a train() function.
+# 2. "score": trains the submissions this pull request changes and saves their scores.
+# Both run student code, so they only get read access. The "PR leaderboard" workflow
+# then puts the scores on the leaderboard as "not reviewed".
 name: Check
 
 on:
   pull_request:
+    # "closed" runs nothing here, but it lets "PR leaderboard" remove the closed PR's row.
+    types: [opened, synchronize, reopened, closed]
 
 permissions:
   contents: read
 
 jobs:
   check:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -24,3 +30,52 @@ jobs:
           uv run ruff format --check .
       - name: Run tests
         run: uv run pytest
+
+  score:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync
+
+      - uses: actions/cache/restore@v6
+        with:
+          path: data
+          key: fashion-mnist-v1
+      - name: Download Fashion-MNIST
+        run: uv run python -c "from fashion import data; data.train_set(); data.test_set()"
+
+      - name: Find submissions to score
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE...$HEAD" -- submissions/ | cut -d/ -f2 | sort -u > changed.txt
+          touch to-score.txt
+          while read -r name; do
+            if [ -f "submissions/$name/model.py" ]; then echo "$name" >> to-score.txt; fi
+          done < changed.txt
+          echo "Submissions to score:"; cat to-score.txt
+
+      - name: Score submissions
+        run: |
+          failed=0
+          while read -r name; do
+            echo "::group::Scoring $name"
+            uv run score "submissions/$name" --save pr-results || failed=1
+            echo "::endgroup::"
+          done < to-score.txt
+          exit $failed
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: pr-results
+          path: pr-results/
+          if-no-files-found: ignore
+          retention-days: 7

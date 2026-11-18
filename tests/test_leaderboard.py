@@ -1,0 +1,84 @@
+"""Tests for the leaderboard rows, above all the checks on pull request scores."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from fashion.leaderboard import (
+    InvalidResult,
+    add_pr_rows,
+    all_rows,
+    check_result,
+    read_pr_results,
+    remove_closed_pr_rows,
+)
+
+GOOD = {
+    "name": "alice",
+    "accuracy": 0.8765,
+    "parameters": 1000,
+    "train_seconds": 42.0,
+    "date": "2026-01-02T03:04:05+00:00",
+    "code_url": None,
+}
+
+
+def test_good_result_is_kept() -> None:
+    assert check_result(GOOD, {"alice"}) == {
+        "name": "alice",
+        "accuracy": 0.8765,
+        "parameters": 1000,
+        "train_seconds": 42.0,
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"name": "bob"},  # not a folder this pull request changes
+        {"name": "../alice"},
+        {"accuracy": 1.5},
+        {"accuracy": float("nan")},
+        {"accuracy": "0.9"},
+        {"accuracy": True},
+        {"parameters": 0},
+        {"parameters": 10.5},
+        {"train_seconds": 601},
+        {"train_seconds": -1},
+        {"extra": "field"},
+    ],
+)
+def test_bad_results_are_rejected(change: dict) -> None:
+    with pytest.raises(InvalidResult):
+        check_result({**GOOD, **change}, {"alice"})
+
+
+def test_unreadable_and_huge_files_are_skipped(tmp_path: Path) -> None:
+    (tmp_path / "good.json").write_text(json.dumps(GOOD))
+    (tmp_path / "broken.json").write_text("{not json")
+    (tmp_path / "huge.json").write_text(" " * 20_000 + json.dumps(GOOD))
+    assert [r["name"] for r in read_pr_results(tmp_path, {"alice"})] == ["alice"]
+
+
+def test_new_push_replaces_the_pull_request_row(tmp_path: Path) -> None:
+    good = check_result(GOOD, {"alice"})
+    add_pr_rows(tmp_path, 7, "https://example.com/pull/7", [good])
+    add_pr_rows(tmp_path, 7, "https://example.com/pull/7", [{**good, "accuracy": 0.9}])
+    rows = all_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["accuracy"] == 0.9
+    assert rows[0]["reviewed"] is False
+
+
+def test_closed_pull_request_rows_are_removed(tmp_path: Path) -> None:
+    good = check_result(GOOD, {"alice"})
+    add_pr_rows(tmp_path, 7, "https://example.com/pull/7", [good])
+    add_pr_rows(tmp_path, 8, "https://example.com/pull/8", [good])
+    remove_closed_pr_rows(tmp_path, open_prs={8})
+    assert [row["pr"] for row in all_rows(tmp_path)] == [8]
+
+
+def test_merged_rows_are_reviewed(tmp_path: Path) -> None:
+    (tmp_path / "2026-01-02T03-04-05_alice.json").write_text(json.dumps(GOOD))
+    assert all_rows(tmp_path)[0]["reviewed"] is True

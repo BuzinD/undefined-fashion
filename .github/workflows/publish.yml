@@ -1,7 +1,8 @@
 # Runs after the teacher merges a pull request into main.
 # 1. "score" trains every submission that changed and measures it.
 #    It runs student code, so it only gets read access to the repo.
-# 2. "publish" saves the new results to the repo and updates the leaderboard website.
+# 2. "publish" saves the new results to the repo as reviewed rows, removes the
+#    "not reviewed" rows of merged or closed pull requests, and updates the website.
 name: Score and publish
 
 on:
@@ -98,11 +99,13 @@ jobs:
       contents: write
       pages: write
       id-token: write
+      pull-requests: read # to find which pull requests are still open
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
       - uses: actions/download-artifact@v8
         continue-on-error: true # there is nothing to download when no submission was scored
         with:
@@ -110,7 +113,13 @@ jobs:
           path: results/
 
       - name: Save new results to the repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
+          # A merged pull request now has a reviewed row, so remove its "not reviewed" row.
+          open=$(gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate --jq '.[].number' | tr '\n' ' ')
+          uv run --no-project --python 3.14 python src/fashion/leaderboard.py clean --open "$open"
           git add results/
           if git diff --cached --quiet; then
             echo "No new results."
@@ -126,9 +135,7 @@ jobs:
         run: |
           mkdir -p _site
           cp site/index.html _site/
-          shopt -s nullglob
-          files=(results/*.json)
-          if [ ${#files[@]} -eq 0 ]; then echo "[]" > _site/results.json; else jq -s . "${files[@]}" > _site/results.json; fi
+          uv run --no-project --python 3.14 python src/fashion/leaderboard.py build --out _site/results.json
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
