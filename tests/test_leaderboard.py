@@ -42,7 +42,7 @@ def test_good_result_is_kept() -> None:
         {"accuracy": float("nan")},
         {"accuracy": "0.9"},
         {"accuracy": True},
-        {"parameters": 0},
+        {"parameters": -1},
         {"parameters": 10.5},
         {"train_seconds": 601},
         {"train_seconds": -1},

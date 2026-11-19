@@ -46,40 +46,25 @@ def train(train_set: Dataset) -> nn.Module:
     optimizer = optim.SGD(model.parameters(), lr=cfg.learning_rate)
     criterion = nn.CrossEntropyLoss()
 
-    # Loss values over time, in case you want to plot them.
-    history = {"loss/train": [], "loss/train_batch": [], "loss/valid": []}
-
-    def emit_metrics(metric: str, step: int, value: float) -> None:
-        history[metric].append((step, value))
-
-    step = -1
     for epoch in range(cfg.epochs):
+        model.train()  # training mode (matters for layers like dropout)
         train_loss = 0.0
         for images, targets in train_loader:
-            step += 1
             images, targets = images.to(device), targets.to(device)
             optimizer.zero_grad()
-
-            logits = model(images)
-            loss = criterion(logits, targets)
+            loss = criterion(model(images), targets)
             loss.backward()
-
-            emit_metrics("loss/train_batch", step, loss.item())
-            train_loss += loss.item()
-
             optimizer.step()
-        train_loss /= len(train_loader)
-        emit_metrics("loss/train", step, train_loss)
+            train_loss += loss.item() * len(targets)
+        train_loss /= len(train_split)
 
+        model.eval()  # evaluation mode for checking the valid images
+        valid_loss = 0.0
         with torch.no_grad():
-            valid_loss = 0.0
             for images, targets in valid_loader:
                 images, targets = images.to(device), targets.to(device)
-                logits = model(images)
-                loss = criterion(logits, targets)
-                valid_loss += loss.item()
-            valid_loss /= len(valid_loader)
-            emit_metrics("loss/valid", step, valid_loss)
+                valid_loss += criterion(model(images), targets).item() * len(targets)
+        valid_loss /= len(valid_split)
 
         print(f"{epoch=} {train_loss=:.4f} {valid_loss=:.4f}")
 

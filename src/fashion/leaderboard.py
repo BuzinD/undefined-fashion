@@ -50,8 +50,8 @@ def check_result(raw: object, allowed_names: set[str]) -> dict:
         raise InvalidResult("accuracy must be a number from 0 to 1")
 
     parameters = raw["parameters"]
-    if type(parameters) is not int or not 0 < parameters <= MAX_PARAMETERS:
-        raise InvalidResult("parameters must be a positive whole number")
+    if type(parameters) is not int or not 0 <= parameters <= MAX_PARAMETERS:
+        raise InvalidResult("parameters must be a whole number, 0 or more")
 
     seconds = raw["train_seconds"]
     is_number = type(seconds) in (int, float) and math.isfinite(seconds)

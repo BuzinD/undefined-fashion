@@ -9,6 +9,7 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset
 
+from fashion.leaderboard import check_result
 from fashion.score import (
     Result,
     SubmissionError,
@@ -88,3 +89,49 @@ def test_save_writes_one_json_file(tmp_path: Path) -> None:
     path = save(result, tmp_path)
     assert path.name == "2026-01-02T03-04-05_alice.json"
     assert json.loads(path.read_text())["accuracy"] == 0.9
+
+
+def test_wrong_output_shape_is_an_error_not_a_score() -> None:
+    # A [batch, 10, 1] output used to broadcast against the labels and score 400%.
+    test_set = TensorDataset(torch.rand(4, 1, 28, 28), torch.tensor([0, 1, 2, 3]))
+
+    class ExtraDimension(nn.Module):
+        def forward(self, images):
+            return torch.zeros(len(images), 10, 1)
+
+    with pytest.raises(SubmissionError, match=r"\(4, 10\)"):
+        accuracy(ExtraDimension(), test_set)
+
+
+class NearestCentroid(nn.Module):
+    """Stores the average image of each class and picks the closest one. No parameters."""
+
+    def __init__(self, centroids: torch.Tensor) -> None:
+        super().__init__()
+        self.register_buffer("centroids", centroids)
+
+    def forward(self, images):
+        return -torch.cdist(images.flatten(1), self.centroids)
+
+
+def test_model_with_zero_parameters_is_scored_and_accepted() -> None:
+    def train(train_set):
+        images, labels = train_set.tensors
+        flat = images.flatten(1)
+        return NearestCentroid(torch.stack([flat[labels == c].mean(0) for c in range(10)]))
+
+    labels = torch.arange(20) % 10
+    data = TensorDataset(torch.rand(20, 1, 28, 28) + labels.view(-1, 1, 1, 1), labels)
+    model, seconds = train_with_time_limit(train, data)
+
+    raw = {
+        "name": "alice",
+        "accuracy": accuracy(model, data),
+        "parameters": count_parameters(model),
+        "train_seconds": seconds,
+        "date": "2026-01-02T03:04:05+00:00",
+        "code_url": None,
+    }
+    assert raw["parameters"] == 0
+    assert raw["accuracy"] == 1.0
+    assert check_result(raw, {"alice"})["parameters"] == 0

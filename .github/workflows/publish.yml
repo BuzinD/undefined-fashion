@@ -1,7 +1,8 @@
 # Runs after the teacher merges a pull request into main.
-# 1. "score" trains every submission that changed and measures it.
-#    It runs student code, so it only gets read access to the repo.
-# 2. "publish" saves the new results to the repo as reviewed rows, removes the
+# 1. "find": which submission folders changed.
+# 2. "score": trains them and measures them. It runs student code, so it only gets
+#    read access. Skipped when no submission changed.
+# 3. "publish": saves the results to the repo as reviewed rows, removes the
 #    "not reviewed" rows of merged or closed pull requests, and updates the website.
 name: Score and publish
 
@@ -15,21 +16,49 @@ on:
         required: false
         default: ""
 
-# Run one at a time, so two merges never write results at the same moment.
-concurrency:
-  group: leaderboard
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
-  score:
+  find:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
+    timeout-minutes: 5
+    outputs:
+      names: ${{ steps.find.outputs.names }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - id: find
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          CHOSEN: ${{ inputs.submission }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$CHOSEN" = "all" ]; then
+              names=$(.github/scripts/changed-submissions.sh all)
+            else
+              names=$(.github/scripts/changed-submissions.sh all | grep -Fx "$CHOSEN" || true)
+            fi
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            names=$(.github/scripts/changed-submissions.sh all)  # first push: score everything
+          else
+            names=$(.github/scripts/changed-submissions.sh "$BEFORE..HEAD")
+          fi
+          names=$(echo "$names" | tr '\n' ' ')  # one line, separated by spaces
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+          echo "Submissions to score: ${names:-none}"
+
+  score:
+    needs: find
+    if: needs.find.outputs.names != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v10.3.3
       - run: uv sync
@@ -48,40 +77,13 @@ jobs:
           path: data
           key: fashion-mnist-v1
 
-      - name: Find submissions to score
-        env:
-          EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
-          CHOSEN: ${{ inputs.submission }}
-        run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            if [ "$CHOSEN" = "all" ]; then names=$(ls submissions); else names="$CHOSEN"; fi
-          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            names=$(ls submissions)  # first push: score everything
-          else
-            names=$(git diff --name-only "$BEFORE" HEAD -- submissions/ | cut -d/ -f2 | sort -u)
-          fi
-          for name in $names; do
-            if [ -f "submissions/$name/model.py" ]; then echo "$name" >> to-score.txt; fi
-          done
-          touch to-score.txt
-          echo "Submissions to score:"; cat to-score.txt
-
       - name: Score submissions
+        env:
+          NAMES: ${{ needs.find.outputs.names }}
         run: |
-          failed=0
-          while read -r name; do
-            echo "::group::Scoring $name"
-            if uv run score "submissions/$name" --save new-results; then
-              echo "Scored **$name**" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "::error::Scoring $name failed. Open this step's log to see why."
-              failed=1
-            fi
-            echo "::endgroup::"
-          done < to-score.txt
-          exit $failed
-
+          folders=()
+          for name in $NAMES; do folders+=("submissions/$name"); done
+          uv run score "${folders[@]}" --save new-results
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -90,11 +92,16 @@ jobs:
           if-no-files-found: ignore
 
   publish:
-    needs: score
-    # Publish the results that worked, even if one submission failed.
-    if: ${{ !cancelled() }}
+    needs: [find, score]
+    # Publish the results that worked, even if one submission failed or none changed.
+    if: ${{ !cancelled() && needs.find.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Only one job writes results at a time. "queue: max" keeps every waiting run
+    # in line, so a merge's results are never dropped.
+    concurrency:
+      group: leaderboard
+      queue: max
     permissions:
       contents: write
       pages: write
@@ -105,9 +112,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - uses: astral-sh/setup-uv@v10.3.3
       - uses: actions/download-artifact@v8
-        continue-on-error: true # there is nothing to download when no submission was scored
+        if: needs.score.result != 'skipped'
+        continue-on-error: true # nothing to download when every submission failed
         with:
           name: new-results
           path: results/
@@ -120,16 +130,7 @@ jobs:
           # A merged pull request now has a reviewed row, so remove its "not reviewed" row.
           open=$(gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate --jq '.[].number' | tr '\n' ' ')
           uv run --no-project --python 3.14 python src/fashion/leaderboard.py clean --open "$open"
-          git add results/
-          if git diff --cached --quiet; then
-            echo "No new results."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Add leaderboard results"
-          git pull --rebase
-          git push
+          .github/scripts/commit-results.sh "Add leaderboard results"
 
       - name: Build the website
         run: |

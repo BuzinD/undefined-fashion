@@ -9,7 +9,9 @@ Every model is scored on 10,000 test images it has never seen. The leaderboard s
 three numbers for each submission:
 
 - **Test accuracy:** how many test images the model labels correctly. Higher is better.
-- **Model size:** how many numbers (parameters) the model learned. Smaller is neater.
+- **Parameters:** how many numbers the model learns by gradient descent. Smaller is neater.
+  Values stored with `register_buffer` (for example, class averages) are not counted, so a
+  model can have 0.
 - **Training time:** how long your `train()` function ran on GitHub's computer.
 
 ## What you need
@@ -75,11 +77,13 @@ def train(train_set: Dataset) -> nn.Module:
 
 - `train_set` holds the 60,000 training images. Each item is `(image, label)`. The image is
   a `1x28x28` tensor with values from 0 to 1, and the label is a number from 0 to 9.
-- Return your trained model. We test it on images in the same format, on the CPU, and take
-  the class with the highest output as its answer.
+- Return your trained model. We test it on images in the same format, on the CPU. For a
+  batch of images it must return one row of 10 class scores per image, shape `(batch, 10)`.
+  The class with the highest score is its answer.
 - **Train only on `train_set`.** Do not download or read the test images in any way.
 - **Training must finish in 10 minutes** on GitHub's computer, which has 4 CPU cores and no
-  GPU. The baseline takes about 2 minutes there. Your laptop may be faster or slower.
+  GPU. The baseline takes under 2 minutes there. Your laptop may be faster or slower, so
+  the time GitHub reports on your pull request is the one that counts.
 - If you change the input (for example, normalize it), do it inside your model, because
   the test images arrive unchanged.
 - Put all your code in `model.py` and only change files inside your own folder.

@@ -4,8 +4,8 @@ Run it like this:
 
     uv run score submissions/<your-github-name>
 
-After a merge, GitHub runs the same command with `--save results` to add a row
-to the leaderboard.
+GitHub runs the same command on pull requests and after merges, with `--save`
+to keep the results for the leaderboard.
 """
 
 import argparse
@@ -104,7 +104,10 @@ def train_with_time_limit(
 
 
 def count_parameters(model: nn.Module) -> int:
-    """The model size: how many numbers the model learned."""
+    """How many numbers the model learns by gradient descent (its parameters).
+
+    Buffers, such as stored class averages, are not counted. A model can have 0.
+    """
     return sum(p.numel() for p in model.parameters())
 
 
@@ -115,7 +118,14 @@ def accuracy(model: nn.Module, test_set: Dataset) -> float:
     total = 0
     with torch.inference_mode():
         for images, labels in DataLoader(test_set, batch_size=1000):
-            correct += (model(images).argmax(dim=1) == labels).sum().item()
+            outputs = model(images)
+            if outputs.ndim != 2 or len(outputs) != len(labels):
+                raise SubmissionError(
+                    f"For a batch of {len(labels)} images the model returned shape "
+                    f"{tuple(outputs.shape)}. It must return one row of class scores per "
+                    f"image, shape ({len(labels)}, 10)."
+                )
+            correct += (outputs.argmax(dim=1) == labels).sum().item()
             total += len(labels)
     return correct / total
 
@@ -158,20 +168,27 @@ def save(result: Result, results_dir: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train a submission and print its score.")
-    parser.add_argument("folder", type=Path, help="for example: submissions/baseline")
-    parser.add_argument("--save", type=Path, metavar="DIR", help="also save the result here")
+    parser = argparse.ArgumentParser(description="Train submissions and print their scores.")
+    parser.add_argument("folders", type=Path, nargs="+", help="for example: submissions/baseline")
+    parser.add_argument("--save", type=Path, metavar="DIR", help="also save the results here")
     args = parser.parse_args()
 
-    try:
-        result = score(args.folder)
-    except SubmissionError as error:
-        sys.exit(f"Error: {error}")
+    failed = []
+    for folder in args.folders:
+        try:
+            result = score(folder)
+        except SubmissionError as error:
+            print(f"Error in {folder}: {error}", file=sys.stderr)
+            failed.append(folder.name)
+            continue
 
-    print()
-    print(f"Submission:     {result.name}")
-    print(f"Test accuracy:  {result.accuracy:.2%}")
-    print(f"Model size:     {result.parameters:,} parameters")
-    print(f"Training time:  {result.train_seconds:.0f} seconds")
-    if args.save:
-        print(f"Saved to:       {save(result, args.save)}")
+        print()
+        print(f"Submission:     {result.name}")
+        print(f"Test accuracy:  {result.accuracy:.2%}")
+        print(f"Parameters:     {result.parameters:,}")
+        print(f"Training time:  {result.train_seconds:.0f} seconds")
+        if args.save:
+            print(f"Saved to:       {save(result, args.save)}")
+
+    if failed:
+        sys.exit(f"Could not score: {', '.join(failed)}")

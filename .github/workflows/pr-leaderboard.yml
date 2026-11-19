@@ -12,15 +12,15 @@ on:
     workflows: [Check]
     types: [completed]
 
-# Run one at a time, together with "Score and publish", so they never clash.
-concurrency:
-  group: leaderboard
-  cancel-in-progress: false
-
 jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Only one job writes results at a time, shared with "Score and publish".
+    # "queue: max" keeps every waiting run in line instead of dropping it.
+    concurrency:
+      group: leaderboard
+      queue: max
     permissions:
       actions: read # to download the uploaded scores
       contents: write # to save the rows
@@ -90,18 +90,7 @@ jobs:
 
       - name: Save the rows to the repo
         id: save
-        run: |
-          git add results/
-          if git diff --cached --quiet; then
-            echo "Nothing changed."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update pull request rows on the leaderboard"
-          git pull --rebase
-          git push
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+        run: .github/scripts/commit-results.sh "Update pull request rows on the leaderboard"
 
       - name: Build the website
         if: steps.save.outputs.changed == 'true'

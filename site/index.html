@@ -50,18 +50,19 @@
 </head>
 <body>
   <h1>Fashion-MNIST Leaderboard</h1>
-  <p>Every merged submission is one row. Accuracy is measured on 10,000 test images the models never trained on.
-     Rows marked <span class="badge pending">not reviewed</span> come from open pull requests the teacher
-     has not merged yet. Click a column name to sort.</p>
+  <p>We score on the 10,000-image test split. Train only on the supplied training set.
+     Every merged submission is one row. Rows marked <span class="badge pending">not reviewed</span>
+     come from open pull requests the teacher has not checked yet. # is the rank by accuracy.
+     Click a column name to sort.</p>
   <label><input type="checkbox" id="show-pending" checked> Show scores that are not reviewed yet</label>
   <div class="scroll">
     <table>
       <thead>
         <tr>
-          <th class="num">#</th>
+          <th class="num" title="Rank by test accuracy">#</th>
           <th data-key="name">Student</th>
           <th data-key="accuracy" class="num">Test accuracy</th>
-          <th data-key="parameters" class="num">Model size (parameters)</th>
+          <th data-key="parameters" class="num">Parameters</th>
           <th data-key="train_seconds" class="num">Training time</th>
           <th data-key="date">Date</th>
           <th data-key="reviewed">Status</th>
@@ -85,17 +86,21 @@
 
     function render() {
       const showPending = document.getElementById("show-pending").checked;
-      const rows = results.filter((r) => showPending || r.reviewed).sort((a, b) => {
+      const shown = results.filter((r) => showPending || r.reviewed);
+      // # is always the rank by accuracy, whatever column the table is sorted by.
+      const byAccuracy = [...shown].sort((a, b) => b.accuracy - a.accuracy);
+      const rank = new Map(shown.map((r) => [r, byAccuracy.findIndex((x) => x.accuracy === r.accuracy) + 1]));
+      const rows = shown.sort((a, b) => {
         const order = a[sortKey] < b[sortKey] ? -1 : a[sortKey] > b[sortKey] ? 1 : 0;
         return descending ? -order : order;
       });
       const body = document.getElementById("rows");
       body.replaceChildren();
-      rows.forEach((r, i) => {
+      rows.forEach((r) => {
         const tr = document.createElement("tr");
         if (r.name === "baseline") tr.className = "baseline";
         if (!r.reviewed) tr.className = "pending";
-        tr.append(cell(i + 1, "num"));
+        tr.append(cell(rank.get(r), "num"));
         const name = cell("");
         if (r.code_url) {
           const link = document.createElement("a");
