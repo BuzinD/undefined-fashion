@@ -140,7 +140,8 @@
       });
     });
 
-    fetch("results.json")
+    // "no-cache" asks the server for a newer file on every load, so new scores show up right away.
+    fetch("results.json", { cache: "no-cache" })
       .then((response) => response.json())
       .then((data) => { results = data; render(); })
       .catch(() => {
