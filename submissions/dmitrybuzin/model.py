@@ -1,5 +1,6 @@
 """MLP from fashion.ipynb, wrapped in the leaderboard's train interface."""
 
+from copy import deepcopy
 from dataclasses import dataclass
 
 import torch
@@ -10,7 +11,8 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
 @dataclass
 class Config:
     batch_size: int = 512
-    epochs: int = 40
+    epochs: int = 35
+    patience: int = 7
 
 
 def train(train_set: Dataset) -> nn.Module:
@@ -40,8 +42,13 @@ def train(train_set: Dataset) -> nn.Module:
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
+    best_valid_loss = float("inf")
+    best_state = None
+    best_epoch = -1
+    epochs_without_improvement = 0
 
     for epoch in range(cfg.epochs):
+        model.train()
         train_loss = 0.0
         for images, targets in train_loader:
             images, targets = images.to(device), targets.to(device)
@@ -53,6 +60,7 @@ def train(train_set: Dataset) -> nn.Module:
             optimizer.step()
         train_loss /= len(train_loader)
 
+        model.eval()
         with torch.no_grad():
             valid_loss = 0.0
             for images, targets in valid_loader:
@@ -63,6 +71,21 @@ def train(train_set: Dataset) -> nn.Module:
             valid_loss /= len(valid_loader)
 
         print(f"{epoch=} {train_loss=:.4f} {valid_loss=:.4f}")
+
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            best_state = deepcopy(model.state_dict())
+            best_epoch = epoch
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= cfg.patience:
+                print(f"Early stopping: no validation improvement for {cfg.patience} epochs.")
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        print(f"Restored {best_epoch=} {best_valid_loss=:.4f}")
 
     model.eval()
     return model
