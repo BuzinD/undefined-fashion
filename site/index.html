@@ -46,6 +46,22 @@
     .badge { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 13px; border: 1px solid var(--line); }
     .badge.pending { border-color: #bf8700; color: #bf8700; }
     label { display: inline-block; margin-bottom: 12px; cursor: pointer; }
+    h2 { margin: 8px 0 4px; font-size: 20px; }
+    .chart { position: relative; margin-bottom: 32px; }
+    .chart svg { display: block; overflow: visible; }
+    .chart text { fill: var(--muted); font-size: 12px; }
+    .chart .grid { stroke: var(--line); }
+    .chart .dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+    .chart .dot.pending { fill: var(--bg); stroke: var(--accent); }
+    .chart .point:hover .dot, .chart .point:focus .dot { r: 7; }
+    .chart .point { outline: none; }
+    .chart .point:focus-visible .dot { stroke: var(--text); }
+    .key { color: var(--accent); }
+    .tip {
+      position: absolute; pointer-events: none; white-space: nowrap;
+      padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--bg); box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); font-size: 14px;
+    }
   </style>
 </head>
 <body>
@@ -55,6 +71,13 @@
      come from open pull requests the teacher has not checked yet. # is the rank by accuracy.
      Click a column name to sort.</p>
   <label><input type="checkbox" id="show-pending" checked> Show scores that are not reviewed yet</label>
+
+  <h2>Accuracy and training time</h2>
+  <p>Each dot is one row of the table. The top left is best: high accuracy after a short training.
+     <span class="key">●</span> reviewed, <span class="key">○</span> not reviewed.
+     Point at a dot to see whose it is, and click it to see the code.</p>
+  <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
+
   <div class="scroll">
     <table>
       <thead>
@@ -84,9 +107,99 @@
       return td;
     }
 
+    function svg(tag, attributes) {
+      const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+      return element;
+    }
+
+    // Round axis ends and steps: 1, 2 or 5 times a power of ten.
+    function axis(low, high) {
+      if (high - low < 1e-9) { low -= 1; high += 1; }
+      const rough = (high - low) / 4;
+      const power = 10 ** Math.floor(Math.log10(rough));
+      const step = [1, 2, 5, 10].map((m) => m * power).find((s) => s >= rough);
+      low = Math.floor(low / step) * step;
+      high = Math.ceil(high / step) * step;
+      const ticks = [];
+      for (let t = low; t <= high + step / 2; t += step) ticks.push(Number(t.toFixed(6)));
+      return { low, high, ticks };
+    }
+
+    function drawChart(shown) {
+      const chart = document.getElementById("chart");
+      const tip = document.getElementById("tip");
+      chart.querySelector("svg")?.remove();
+      tip.hidden = true;
+      if (shown.length === 0) return;
+
+      const width = chart.clientWidth;
+      const height = Math.min(320, Math.round(width * 0.7));
+      const margin = { top: 24, right: 12, bottom: 44, left: 44 };
+      // A little room around the dots, so none sits on the edge of the chart.
+      const xAxis = axis(0, Math.max(...shown.map((r) => r.train_seconds)) * 1.05);
+      const yAxis = axis(
+        Math.min(...shown.map((r) => r.accuracy * 100)) - 0.5,
+        Math.max(...shown.map((r) => r.accuracy * 100)) + 0.5,
+      );
+      const x = (seconds) => margin.left + ((seconds - xAxis.low) / (xAxis.high - xAxis.low)) * (width - margin.left - margin.right);
+      const y = (percent) => height - margin.bottom - ((percent - yAxis.low) / (yAxis.high - yAxis.low)) * (height - margin.top - margin.bottom);
+
+      const plot = svg("svg", { width, height, role: "img", "aria-label": "Test accuracy against training time. The table below has the same data." });
+      yAxis.ticks.forEach((t) => {
+        plot.append(svg("line", { class: "grid", x1: margin.left, x2: width - margin.right, y1: y(t), y2: y(t) }));
+        const label = svg("text", { x: margin.left - 8, y: y(t) + 4, "text-anchor": "end" });
+        label.textContent = t + "%";
+        plot.append(label);
+      });
+      xAxis.ticks.forEach((t) => {
+        const label = svg("text", { x: x(t), y: height - margin.bottom + 18, "text-anchor": "middle" });
+        label.textContent = t;
+        plot.append(label);
+      });
+      const yTitle = svg("text", { x: margin.left - 8, y: 12 });
+      yTitle.textContent = "Test accuracy";
+      const xTitle = svg("text", { x: width - margin.right, y: height - 6, "text-anchor": "end" });
+      xTitle.textContent = "Training time (seconds)";
+      plot.append(yTitle, xTitle);
+
+      shown.forEach((r) => {
+        const point = svg("a", { class: "point", tabindex: 0 });
+        if (r.code_url) point.setAttribute("href", r.code_url);
+        const cx = x(r.train_seconds);
+        const cy = y(r.accuracy * 100);
+        // A bigger see-through circle makes small dots easy to point at.
+        point.append(
+          svg("circle", { cx, cy, r: 12, fill: "transparent" }),
+          svg("circle", { cx, cy, r: 5, class: r.reviewed ? "dot" : "dot pending" }),
+        );
+        const show = () => {
+          tip.replaceChildren();
+          const name = document.createElement("strong");
+          name.textContent = r.name;
+          tip.append(name, document.createElement("br"),
+            `${(r.accuracy * 100).toFixed(2)}% in ${Math.round(r.train_seconds)} s`);
+          if (!r.reviewed) tip.append(document.createElement("br"), "not reviewed");
+          tip.hidden = false;
+          // Keep the tip inside the chart, above the dot.
+          const left = Math.max(0, Math.min(cx - tip.offsetWidth / 2, width - tip.offsetWidth));
+          tip.style.left = left + "px";
+          tip.style.top = cy - tip.offsetHeight - 12 + "px";
+        };
+        const hide = () => { tip.hidden = true; };
+        point.addEventListener("pointerenter", show);
+        point.addEventListener("pointerleave", hide);
+        point.addEventListener("focus", show);
+        point.addEventListener("blur", hide);
+        plot.append(point);
+      });
+      chart.prepend(plot);
+    }
+
     function render() {
       const showPending = document.getElementById("show-pending").checked;
       const shown = results.filter((r) => showPending || r.reviewed);
+      drawChart(shown);
       // # is always the rank by accuracy, whatever column the table is sorted by.
       const byAccuracy = [...shown].sort((a, b) => b.accuracy - a.accuracy);
       const rank = new Map(shown.map((r) => [r, byAccuracy.findIndex((x) => x.accuracy === r.accuracy) + 1]));
@@ -129,6 +242,13 @@
     }
 
     document.getElementById("show-pending").addEventListener("change", render);
+    // Phones fire "resize" while scrolling, so draw again only when the width changes.
+    let lastWidth = window.innerWidth;
+    window.addEventListener("resize", () => {
+      if (window.innerWidth === lastWidth) return;
+      lastWidth = window.innerWidth;
+      render();
+    });
 
     document.querySelectorAll("th[data-key]").forEach((th) => {
       th.addEventListener("click", () => {
