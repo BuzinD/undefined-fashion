@@ -1,8 +1,0 @@
-{
-  "name": "baseline",
-  "accuracy": 0.7856,
-  "parameters": 50890,
-  "train_seconds": 78.9,
-  "date": "2026-11-18T23:30:56+00:00",
-  "code_url": "https://github.com/dewansa/undefined-fashion/blob/568704c938e35ea8971f593b1326f719a76a7548/submissions/baseline/model.py"
-}
