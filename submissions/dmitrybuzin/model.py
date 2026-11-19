@@ -62,7 +62,7 @@ def train(train_set: Dataset) -> nn.Module:
                 valid_loss += loss.item()
             valid_loss /= len(valid_loader)
 
-        print(f"{epoch=} {train_loss=:.4f} {valid_loss}:.4f")
+        print(f"{epoch=} {train_loss=:.4f} {valid_loss=:.4f}")
 
     model.eval()
     return model
