@@ -47,7 +47,7 @@ jobs:
           else
             names=$(.github/scripts/changed-submissions.sh "$BEFORE..HEAD")
           fi
-          names=$(echo "$names" | tr '\n' ' ')  # one line, separated by spaces
+          names=$(echo $names)  # one line, separated by spaces (empty stays empty)
           echo "names=$names" >> "$GITHUB_OUTPUT"
           echo "Submissions to score: ${names:-none}"
 
