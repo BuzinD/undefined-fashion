@@ -4,18 +4,20 @@ from dataclasses import dataclass
 
 import torch
 from torch import nn, optim
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 
 
 @dataclass
 class Config:
     batch_size: int = 256
-    epochs: int = 40
+    epochs: int = 120
     learning_rate: float = 0.002
     min_learning_rate: float = 0.00002
     weight_decay: float = 0.01
     label_smoothing: float = 0.05
     flip_probability: float = 0.5
+    shift_probability: float = 0.35
 
 
 def load_all(train_set: Dataset) -> tuple[torch.Tensor, torch.Tensor]:
@@ -55,6 +57,9 @@ def train(train_set: Dataset) -> nn.Module:
             inputs = images[indices]
             if torch.rand(()) < cfg.flip_probability:
                 inputs = inputs.flip((-1,))
+            if torch.rand(()) < cfg.shift_probability:
+                top, left = torch.randint(0, 3, (2,)).tolist()
+                inputs = F.pad(inputs, (1, 1, 1, 1))[:, :, top : top + 28, left : left + 28]
             optimizer.zero_grad(set_to_none=True)
             loss = criterion(model(inputs), labels[indices])
             loss.backward()
